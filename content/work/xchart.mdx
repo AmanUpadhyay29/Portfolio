@@ -1,0 +1,114 @@
+---
+title: XcHart
+slug: xchart
+summary: A multi-timeframe chart with live streaming candles and a setup engine. It runs privately behind a login because of data licences; the screenshots here use simulated data.
+status: live · private
+repo: xchart
+object: xchart
+stack:
+  - Python
+  - FastAPI
+  - pandas
+  - SQLite
+  - TypeScript
+  - Vite
+  - Lightweight Charts
+  - WebSocket
+  - systemd
+  - Caddy
+order: 3
+---
+
+## The problem
+
+Marking up a chart by hand is slow and inconsistent: the same person draws different zones on different days. I wanted the same rules applied the same way on gold and FX, across several timeframes at once, and a fast way to find out whether those rules were worth anything.
+
+Later I wanted the chart live from any device, with prices that move within seconds.
+
+## What I built
+
+- **A Python backend (FastAPI)** with one reconnecting stream for every market. A candle store turns ticks into candles and derives the higher timeframes from them, and a WebSocket pushes the forming candle to the page several times a second.
+- **A setup engine** that marks structure and grades setups on closed candles only. It is one pure function, and the live app and the backtester call the same one, so there is no second copy to drift.
+- **A TypeScript front end** drawn with TradingView's Lightweight Charts.
+- **No way to place a trade.** There is no order endpoint, not even a stub, and a test fails if any route name looks like one.
+- **A login in front of every route**, the WebSocket included.
+
+I measured the engine with its own backtester, and it has no edge. The app says so wherever a setup can appear, and it stays useful as an analysis tool. The backtester settled the question in days, not months of live trading.
+
+## How it fits together
+
+<Diagram name="xchart" />
+
+Every frame is checked closed before the engine reads it, so a forming candle can never leak into a decision. A silent stretch of the market produces no candle, so gaps stay visible instead of being filled with invented bars.
+
+These two screens come from a local run on a simulated feed: the header reads FAKE TEST FEED, and every price is a random walk.
+
+<figure className="my-8">
+  <img
+    src="/images/xchart-sim-1.webp"
+    width={1440}
+    height={900}
+    loading="lazy"
+    decoding="async"
+    alt="XcHart on simulated data: a candlestick chart for gold (XAU/USD) on the short timeframe, the market tabs and quote along the top, and a side panel reading No setup."
+    className="h-auto w-full rounded-2xl border border-line"
+  />
+  <figcaption className="mt-3 text-center font-mono text-xs text-muted">Simulated data. The short timeframe, with the setup panel on the right.</figcaption>
+</figure>
+
+<figure className="my-8">
+  <img
+    src="/images/xchart-sim-2.webp"
+    width={1440}
+    height={900}
+    loading="lazy"
+    decoding="async"
+    alt="XcHart on simulated data: the same market on the higher timeframe, with the bid and ask in the header and the no-edge notice at the bottom of the panel."
+    className="h-auto w-full rounded-2xl border border-line"
+  />
+  <figcaption className="mt-3 text-center font-mono text-xs text-muted">Simulated data. The higher timeframe, built from the same candles.</figcaption>
+</figure>
+
+## The hardest problems
+
+### Data I'm allowed to show
+
+I first planned a public site, then read the terms of every feed that updates within seconds. None clearly allows public display: some limit use to the account holder, others need a redistribution agreement, and the one free option for dashboards updates too slowly for a live chart. So the live app is private, its login exists to honour the licence rather than for convenience, and anything public, like this page, uses a simulated feed. Lesson: read the data licence before building a product around the data.
+
+### A key guard, because of the gateway's address lockout
+
+The private app reads prices from Termless, the MT5 gateway built by my friend thedev09, which also serves my trading fleet. Termless locks an address out after too many unknown API keys in a short window, and XcHart shares that address with the fleet, so a retry loop on a mistyped key could cut the bots off, even from closing trades. The key guard makes one bad key cost one rejected call: a rejected key writes a stop that survives restarts until I clear it by hand, a rate-limit reply sets a pause that also survives restarts, and if the guard can't save or read its state it fails closed. A script breaks each guard on purpose and requires its tests to fail, so the guards are proven, not assumed. Lesson: when you share a dependency with something important, your failure modes become its failure modes.
+
+### Indicators need history before they are valid
+
+The bias layer rests on a slow moving average on the higher timeframe, and an exponential average needs many bars before its starting value stops mattering. The history the first spec asked for gave far too few higher-timeframe bars for it to settle, so early bias calls could have been wrong. I worked out the warm-up arithmetic, set the backfill deep enough that what is left of the error is a small fraction of one price tick, and a check script asserts the counts. On the live app the first history load runs while markets are closed, and a market still waiting for history holds up only its own engine. Lesson: compute an indicator's warm-up instead of guessing it.
+
+## The database work
+
+XcHart's storage is small on purpose, and it is all SQLite.
+
+- **Plans.** Every plan the engine produces, at every grade, goes into a journal the API serves for review.
+- **The candle cache.** In the private app, candles are saved to disk, so a restart reads only the gap, in small reads.
+- **The broker's bar is the record.** A candle built from ticks can miss a high or a low, so shortly after each close the app reads the last few complete bars from the broker and replaces its own. The engine runs after that.
+- **Reads stay out of the fleet's way.** Candle reads never land in the moments just after a bar closes, when the trading fleet does its own reads.
+
+## Numbers
+
+The commit count and the activity bars at the top of this page are measured from the repository by a script, as of the date shown there.
+
+## Stack
+
+- **Python, FastAPI and pandas** for the feed, the candle store, the engine and the backtester.
+- **SQLite** for the plan journal and the candle cache.
+- **TypeScript and Vite** for the front end, with **TradingView Lightweight Charts** (Apache-2.0) drawing the chart.
+- **WebSocket** for the live push, and the gateway's streaming API for prices.
+- **systemd** and **Caddy** on the server, with hard memory and CPU limits so XcHart is always the first thing to give way.
+
+## What I'd do differently
+
+- Read the data licences before building, not after the app was finished.
+- Run the engine against shuffled bars before building the grading on top of it. That check is what showed it had no edge.
+
+## How it was built
+
+I built this with Claude Code as a pair programmer; the design decisions, the debugging and the operations are mine.

@@ -1,0 +1,99 @@
+---
+title: The trading platform
+slug: trading-platform
+summary: 40+ Python processes running 24/7 under PM2 on one Linux server, on demo accounts, with Postgres journals, NestJS dashboards and a validation gate that kills weak ideas early.
+status: running 24/7
+repo: v1
+object: rack
+stack:
+  - Python
+  - pandas
+  - PM2
+  - Postgres
+  - TypeORM
+  - NestJS
+  - TypeScript
+  - Docker
+  - Ubuntu
+  - systemd
+  - Caddy
+order: 1
+---
+
+## The problem
+
+I wanted to run trading ideas around the clock and find out, honestly, whether any of them worked. That takes two systems, not one.
+
+The first is a fleet that never sleeps: bots that watch the market, place orders, and pick up where they left off after any restart. The second is a way to test an idea hard enough that a bad one dies in a backtest, not on an account.
+
+Everything trades demo accounts. No real money is involved, but I run it like any production system: monitored, written down, and changed one careful step at a time.
+
+## What I built
+
+- **A fleet of 40+ Python processes** under PM2 on one Linux server. Each strategy engine watches its bars and emits trade intents. A consumer sizes each one, checks the risk guards and places the order.
+- **Journals in Postgres.** Each bot writes its own journal of intents, orders and fills. A sync service copies every change into Postgres moments after it happens, and the dashboards read from there.
+- **Dashboards** in NestJS and React that show every engine, every trade and the account, pushed live to the browser.
+- **The order path.** The fleet trades IC Markets demo accounts through Termless, an MT5 gateway built by my friend thedev09. Before that it traded OANDA practice accounts. I ran the switch as a migration, with a checklist and the old path kept ready as a rollback.
+- **Deploys** go file by file through one script: staged, hash-checked, all or nothing. Every deploy adds a changelog entry and a written record in the same commit.
+
+### The validation gate
+
+Every idea goes through the same gate before it gets near an account. I write down the mechanism and the test plan before I look at any data. The backtest uses a cost model calibrated against years of bid/ask data and the fleet's own fills. The out-of-sample data gets one look, the entries are compared with random entries of the same shape, and the result is corrected for how many variants I tried.
+
+The gate is tested too. A control suite in CI checks that the accounting is exact on every push, and a nightly run plants a known edge in the data and checks that the gate finds it.
+
+The gate found no real edge in any strategy family I tested. That is its job: an idea that dies in a backtest never costs anything. The fleet keeps running on demo accounts as forward tests, and as a production system I keep operating and improving.
+
+## How it fits together
+
+<Diagram name="trading-platform" />
+
+The bots are separate processes, so a bug in one engine cannot crash another. They share the server, the Postgres instance and the gateway, so those three are where I spend most of my care.
+
+## The hardest problems
+
+### One out-of-memory kill would have restarted every bot
+
+I audited memory on a server with no swap and asked what happens when the kernel has to kill something. PM2's systemd unit had inherited a default that stops the whole unit when any process in it is killed for memory, plus a rule to restart it on failure, so one killed bot meant every bot stopped and came back. Worse, the kernel's first choice was a Postgres process, because shared memory counted toward its size, and killing it would have freed almost nothing and forced crash recovery. I added a drop-in that keeps the unit running after a kill, a timer that keeps Postgres at the back of the queue, and made the bots the first candidates instead. The lesson: read the failure path before it runs, because a default is a decision too.
+
+### An OS updater kept restarting the fleet
+
+One day every process in the fleet had a new process ID, with no deploy behind it. Ubuntu's unattended upgrades had installed a library patch, and needrestart then restarted every service using that library, PM2 included. The system journal showed it had already happened several times in the previous weeks, and each restart had quietly reset memory use, which hid a slow creep. I added a needrestart override so the fleet is never restarted automatically: security updates still install, and I restart by hand at a quiet time. Lesson: a restart nobody asked for should be loud, not silent.
+
+### The backtest booked a win that never happened
+
+A limit entry and its target both sat inside the range of one bar, and the harness counted a winning trade. One bar cannot tell you which came first: the price may have hit the target before it ever reached the entry, in which case the trade never existed. Now the target is tested first and an ambiguous bar is voided; where finer bars exist, the harness walks them in time order instead of guessing. The fix made the harness slightly pessimistic, and I wrote that down so later verdicts are read with it in mind. Lesson: trust a harness only after it has been audited.
+
+## The database work
+
+**Journals into Postgres.** Each bot keeps its own small journal, and a sync service mirrors every change into one Postgres database for the dashboards. The account history is counted exactly once: each journal has a cursor row in Postgres, and a single statement locks it, inserts the new snapshots and moves it forward.
+
+**The slow chart.** The dashboard's equity chart started timing out. Its timestamp column was text, copied as-is from the journals, and an earlier fix for a varchar-vs-timestamptz comparison error had cast the column inside the filter. That made the filter unusable for an index: every row was cast, then sorted on disk. I put a cheap byte-order text comparison in front of the exact cast, built so it can only over-include, and checked the output was identical. I also found that a `param IS NULL OR column >= param` filter quietly stops Postgres using an index, and that testing in psql with literal values hides it. Now I test the parameterised query the app actually sends.
+
+**The index that vanished.** I added an index by hand and it disappeared at the next restart. TypeORM's `synchronize: true` drops anything the entities don't declare. Now migrations own the schema: a baseline migration checks the live catalog against the expected shape, and the app refuses to start if they differ.
+
+**The lasting fix** was a rollup table: counts and sums per fixed time bucket, so averages stay exact at any zoom. The chart went from a full scan to a read that is almost instant. The SQL is tested against real Postgres running in WebAssembly (PGlite), including the operations SQL files, run verbatim.
+
+**Memory.** An audit showed the bot supervisors were mostly the import cost of pandas and pyarrow. Making them pandas-free shrank them to a fraction of their size and freed a large share of the memory on a server with no swap.
+
+## Numbers
+
+The commit count and the activity bars at the top of this page are measured from the repository by a script, as of the date shown there.
+
+## Stack
+
+- **Python and pandas** for the bots, the backtests and the research tools.
+- **PM2 and systemd** to supervise the fleet; systemd timers for the scheduled jobs.
+- **Postgres** for the journals, with **TypeORM** migrations owning the schema.
+- **NestJS and React** for the dashboards, in TypeScript.
+- **Docker** for Postgres and the Termless gateway (built by thedev09), **Caddy** in front, all on **Ubuntu**.
+
+## What I'd do differently
+
+- Start with one process and one database. That is what Matrix became.
+- Build the validation gate before writing any bots.
+- Make every restart visible from day one.
+
+## How it was built
+
+I built this with Claude Code as a pair programmer; the design decisions, the debugging and the operations are mine.

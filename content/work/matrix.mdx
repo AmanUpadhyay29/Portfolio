@@ -1,0 +1,98 @@
+---
+title: Matrix
+slug: matrix
+summary: A from-scratch TypeScript rewrite of the trading platform. One process, one Postgres + TimescaleDB database, stops held at the broker, and backups with a rehearsed restore.
+status: live
+repo: matrix
+object: matrix
+stack:
+  - TypeScript
+  - Node.js
+  - Fastify
+  - Postgres
+  - TimescaleDB
+  - Drizzle ORM
+  - pgBackRest
+  - React
+  - Docker Compose
+  - Linux
+order: 2
+---
+
+## The problem
+
+The first platform worked, but it had grown the hard way. Every strategy ran as several processes with its own journal, and a whole replication layer existed only because those processes couldn't share one database. The same market data was fetched many times over, and checking health meant SSH and log files.
+
+No strategy had a proven edge, so there was nothing to protect by keeping the old shape. That made it the cheapest moment to rebuild with the opposite one.
+
+## What I built
+
+- **One Node.js process** in TypeScript (Fastify) that holds a shared bar poller, a scheduler, every strategy engine and the trade manager. Each engine is one file with a pure `analyze()` function: bars in, signals out, no I/O.
+- **One Postgres database with TimescaleDB**, written directly. No per-bot files and no sync layer.
+- **Stops and targets held at the broker** as real orders, so a crash or a deploy can never leave a position unprotected. Only soft management, like moving a stop to breakeven, pauses while the process restarts.
+- **New entries fail closed.** If the kill switch or the risk settings can't be confirmed from the database, new signals are rejected. Managing open positions doesn't depend on the database at all.
+- **A boot sequence that is pinned and tested:** check the config, apply migrations, refuse to start on schema drift, and reconcile with the broker before any engine runs.
+- **A React dashboard and admin panel**, live over WebSocket, with a kill switch, per-engine risk, health and streamed, redacted logs. Day-to-day work needs no SSH.
+- **A backtester** that replays stored bars through the same engines and trade manager as production, so there is one code path for both.
+
+It trades an OANDA practice account. The build ran milestone by milestone, from an empty repo to go-live, and the last milestone was disaster recovery.
+
+## How it fits together
+
+<Diagram name="matrix" />
+
+Postgres is the only store. That one decision removed the whole sync layer, and it is also why backups stopped being optional.
+
+## The hardest problems
+
+### Dates that came back as text
+
+The loop that reconciles orders with the broker threw on every pass, so expired orders were never cancelled and kept holding exposure slots. Drizzle's postgres.js driver hands `timestamptz` columns from raw SQL back as strings: it overrides the driver's date parsing so its own query builder can map types, and raw queries skip that mapping. The unit tests missed it because the in-memory test double stored real `Date` objects. I convert at the row-mapper boundary, the mirror of how dates are written, and a regression test drives the real store with rows shaped like the driver's output. Lesson: test an adapter against the real driver's types, not a twin's.
+
+### Disaster recovery as a milestone, not an afterthought
+
+With Postgres as the only store, losing it would lose every closed trade, verdict and cooldown; the broker can only rebuild open positions. pgBackRest runs inside the Postgres container with continuous WAL archiving for point-in-time recovery, plus weekly full and daily incremental backups, and a nightly `pg_dump` wrapped in TimescaleDB's restore hooks is the portable second path. A restore drill rebuilds a throwaway Postgres from the backups, checks row counts, money totals and hypertables against the live database, and fails loudly on any mismatch. The backup repository still lives on the same server: moving it off-box is a config change I haven't made yet, and the health page says so until I do. Lesson: an unrehearsed backup isn't a backup, and a known gap belongs on the dashboard, not in my head.
+
+### Postgres sized for a server that had shrunk
+
+The server's memory sat high with no swap, and part of the reason was Postgres. It had been tuned for the machine as it was at setup; then my cloud provider halved its free-tier limit, and after a reboot the server had half the memory, shared with the first platform's fleet. I capped the memory settings that change on a reload, without a restart, and measured before cutting anything the dashboard depends on (the details are below). Lesson: tuning is a snapshot of the hardware, so re-check it whenever the hardware changes.
+
+## The database work
+
+This is the part closest to my day job: a production Postgres I own end to end.
+
+**Sizing it for the box it is on now.** The first tuning came from timescaledb-tune at setup, sized for the bigger machine. After the server shrank, I capped every memory setting that applies on a reload: maintenance and autovacuum work memory, the number of autovacuum and parallel workers, and the planner's cache estimate. I didn't cut `work_mem` blindly. I measured the biggest sort the dashboard runs, kept `work_mem` above it, and turned on temp-file logging so any spill to disk shows up in the log. `shared_buffers` only changes on a restart, so it gets its own planned quiet window.
+
+**Keeping Postgres out of the kernel's way.** Postgres topped the kernel's out-of-memory ranking, because shared memory counts toward each process's size. Killing a checkpointer frees almost nothing and forces crash recovery. A timer re-applies a low OOM score to every Postgres process, because the setting is lost each time a container starts.
+
+**Schema rules.**
+- Money is `NUMERIC`, never float, and crosses the driver boundary as a string into decimal.js. A test reconciles the realised totals to the cent.
+- Migrations are additive-only and forward-only, and the server refuses to start on drift.
+- Bars, signal history, account snapshots and logs are TimescaleDB hypertables.
+- Engines read only bars marked complete, so a forming candle can't leak into a decision.
+
+**Realtime without polling.** A trigger publishes only keys (table, operation, ids) through `pg_notify`, which keeps messages tiny and WAL light. The server re-reads the row and pushes it over WebSocket. The `LISTEN` runs on its own connection, separate from the query pool.
+
+The first platform has its own database story: [a chart that scanned a whole table, an index that vanished, and the rollup that fixed it](/work/trading-platform#the-database-work).
+
+## Numbers
+
+The commit count and the activity bars at the top of this page are measured from the repository by a script, as of the date shown there.
+
+## Stack
+
+- **TypeScript on Node.js**, with Fastify for the API and the WebSocket hub.
+- **Postgres with TimescaleDB**, through **Drizzle ORM** (postgres.js for queries, node-postgres for `LISTEN`).
+- **pgBackRest** and `pg_dump` for backups, run on a schedule from the host.
+- **React** for the dashboard and admin panel.
+- **Docker Compose** on **Linux**, behind Caddy.
+
+## What I'd do differently
+
+- Make the off-box backup copy part of "done" for the recovery milestone, not a later config change.
+- Test every database adapter against the real driver from the first day.
+- Write down why each Postgres setting has its value, so a hardware change prompts a re-check.
+
+## How it was built
+
+I built this with Claude Code as a pair programmer; the design decisions, the debugging and the operations are mine.

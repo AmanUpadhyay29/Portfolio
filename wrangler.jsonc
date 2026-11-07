@@ -1,0 +1,9 @@
+{
+  "name": "portfolio",
+  "compatibility_date": "2026-11-01",
+  "previews": {},
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  }
+}

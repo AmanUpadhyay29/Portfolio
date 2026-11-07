@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+:root,
+html[data-theme="night"] {
+  --bg: #141528;
+  --bg-lift: #262850;
+  --panel: #1d1f3a;
+  --line: rgba(255, 255, 255, 0.12);
+  --fg: #f3f1ff;
+  --muted: #a7a6c9;
+  --primary: #ffd27a;
+  --on-primary: #2a1f08;
+  --primary-ink: #ffd27a;
+  --status: #c6f36b;
+  --screen-blue: #7cc4ff;
+  --screen-pink: #ff9ecb;
+  --shadow-primary: 0 10px 26px rgba(255, 210, 122, 0.25);
+  --page-bg: radial-gradient(ellipse at 70% 40%, var(--bg-lift), var(--bg) 70%);
+  color-scheme: dark;
+}
+
+html[data-theme="day"] {
+  --bg: #f3f0ff;
+  --bg-lift: #fdf8ef;
+  --panel: #ffffff;
+  --line: rgba(28, 27, 51, 0.14);
+  --fg: #1c1b33;
+  --muted: #5f5d80;
+  --primary: #f5a524;
+  --on-primary: #2a1f08;
+  --primary-ink: #8a5300;
+  --status: #147a3a;
+  --screen-blue: #7cc4ff;
+  --screen-pink: #ff9ecb;
+  --shadow-primary: 0 10px 26px rgba(245, 165, 36, 0.3);
+  --page-bg: linear-gradient(160deg, var(--bg), var(--bg-lift));
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-primary-ink: var(--primary-ink);
+  --color-status: var(--status);
+  --color-screen-blue: var(--screen-blue);
+  --color-screen-pink: var(--screen-pink);
+  --font-display: var(--font-fredoka), system-ui, sans-serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+html {
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100%;
+}
+
+/* the lit backdrop sits on its own fixed layer: a fixed-attachment background repaints on every scroll */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--page-bg);
+  pointer-events: none;
+}
+
+body {
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* CommitBars: one thin bar per day */
+.commit-bars {
+  margin-top: 10px;
+  display: flex;
+  gap: 1px;
+  height: 24px;
+  align-items: flex-end;
+}
+/* --h is a unitless fraction of the tallest bar. --primary-ink keeps 3:1 on day backgrounds. */
+.commit-bars i {
+  flex: 1;
+  height: calc(var(--h) * 100%);
+  background: var(--primary-ink);
+  min-height: 1px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Hero: one highlighted word and one kicker per theme, switched by CSS so the text never changes */
+.hl-night,
+.hl-day {
+  color: inherit;
+}
+html[data-theme="night"] .hl-night,
+html[data-theme="day"] .hl-day {
+  color: var(--primary-ink);
+}
+.k-day {
+  display: none;
+}
+html[data-theme="day"] .k-night {
+  display: none;
+}
+html[data-theme="day"] .k-day {
+  display: inline;
+}

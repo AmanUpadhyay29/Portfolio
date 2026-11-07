@@ -1,0 +1,8 @@
+[
+  { "rule": "unsourced-figures", "file": "content/work/trading-platform.mdx", "match": "40+", "reason": "measured fleet size" },
+  { "rule": "unsourced-figures", "file": "src/content/site.ts", "match": "40+", "reason": "measured fleet size" },
+  { "rule": "unsourced-figures", "file": "out/index.html", "match": "40+", "reason": "measured fleet size" },
+  { "rule": "unsourced-figures", "file": "out/work/trading-platform.html", "match": "40+", "reason": "measured fleet size" },
+  { "rule": "unsourced-figures", "file": "out/404.html", "match": "0%", "reason": "the 404 heading's joke (0% uptime), not a claim" },
+  { "rule": "unsourced-figures", "file": "out/_not-found.html", "match": "0%", "reason": "the 404 heading's joke (0% uptime), not a claim" }
+]

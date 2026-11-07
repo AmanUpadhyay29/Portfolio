@@ -1,0 +1,8 @@
+{
+  "repos": {
+    "v1": "C:/path/to/the-trading-platform-repo",
+    "matrix": "C:/path/to/the-matrix-repo",
+    "xchart": "C:/path/to/the-xchart-repo"
+  },
+  "photo": "C:/path/to/profile-photo.png"
+}
