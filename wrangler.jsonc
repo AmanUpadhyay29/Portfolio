@@ -1,6 +1,10 @@
 {
   "name": "portfolio",
   "compatibility_date": "2026-11-01",
+  // The site lives at portfolio.<subdomain>.workers.dev. Per-version preview
+  // addresses stay off: left unset, each deploy turns them back on.
+  "workers_dev": true,
+  "preview_urls": false,
   "previews": {},
   "assets": {
     "directory": "./out",
